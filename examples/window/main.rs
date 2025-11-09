@@ -1,5 +1,10 @@
-fn main() {
+use cartilage_engine::*;
+use winit::event_loop::EventLoop;
+
+fn main() -> Result<()> {
     env_logger::init();
-    let mut app = cartilage_engine::App::new().unwrap();
-    app.run();
+    let events_loop = EventLoop::new().unwrap();
+    let mut app = AppHandler::default();
+    events_loop.run_app(&mut app).log()?;
+    Ok(())
 }

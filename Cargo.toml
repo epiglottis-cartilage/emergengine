@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ash = "*"
+wgpu = "*"
+winit = "*"
 log = "*"
 env_logger = "*"
-
-
+parking_lot = "*"
+pollster = "*"
+bytemuck = "*"
+image = "*"
+glam = "*"
