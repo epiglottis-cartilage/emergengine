@@ -11,6 +11,7 @@ use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
+    dpi::{LogicalPosition, PhysicalPosition},
     event::WindowEvent,
     event_loop::ActiveEventLoop,
     window::{Window, WindowId},
@@ -32,6 +33,7 @@ struct RenderContext {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     diffuse_bind_group: wgpu::BindGroup,
+    depth_texture: texture::Texture,
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -44,7 +46,7 @@ struct RenderContext {
 impl RenderContext {
     pub async fn new(window: &Arc<Window>) -> Result<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::GL,
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone()).log()?;
@@ -217,6 +219,9 @@ impl RenderContext {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        let depth_texture =
+            texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -246,7 +251,7 @@ impl RenderContext {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 // 将此设置为 Fill 以外的任何值都要需要开启 Feature::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // 需要开启 Features::DEPTH_CLIP_CONTROL
@@ -254,7 +259,13 @@ impl RenderContext {
                 // 需要开启 Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: texture::Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -273,6 +284,7 @@ impl RenderContext {
             index_buffer,
             instances,
             instance_buffer,
+            depth_texture,
             camera,
             camera_buffer,
             camera_bind_group,
@@ -332,6 +344,14 @@ impl RenderContext {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 ..Default::default()
             });
 
@@ -376,6 +396,7 @@ impl App {
 #[derive(Default)]
 pub struct AppHandler {
     app: Arc<Mutex<Option<App>>>,
+    cursor_position: Option<LogicalPosition<f64>>,
 }
 
 impl ApplicationHandler for AppHandler {
@@ -412,6 +433,17 @@ impl ApplicationHandler for AppHandler {
 
         // 窗口事件
         match event {
+            WindowEvent::CursorMoved { position, .. } => match self.cursor_position {
+                Some(ref mut p) => {
+                    let new_p = position.to_logical(app.window.scale_factor());
+                    app.camera_controller
+                        .process_mouse(new_p.x - p.x, new_p.y - p.y);
+                    *p = new_p;
+                }
+                None => {
+                    self.cursor_position = Some(position.to_logical(app.window.scale_factor()));
+                }
+            },
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }

@@ -1,4 +1,5 @@
 use winit::{
+    dpi::PhysicalPosition,
     event::{ElementState, KeyEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
@@ -35,6 +36,7 @@ pub struct CameraLookingAt {
     pub backward: bool,
     pub left: bool,
     pub right: bool,
+    pub rotation: glam::Quat,
 }
 
 impl CameraLookingAt {
@@ -47,43 +49,43 @@ impl CameraLookingAt {
             backward: false,
             left: false,
             right: false,
+            rotation: glam::Quat::IDENTITY,
         }
     }
 
-    pub fn process_keyevents(&mut self, event: &KeyEvent) -> bool {
+    pub fn process_keyevents(&mut self, event: &KeyEvent) {
         // 直接检查 KeyEvent 的状态
         let state = event.state == ElementState::Pressed;
 
         match event.physical_key {
             PhysicalKey::Code(KeyCode::Space) => {
                 self.up = state;
-                true
             }
             PhysicalKey::Code(KeyCode::ShiftLeft) => {
                 self.down = state;
-                true
             }
             PhysicalKey::Code(KeyCode::KeyW) | PhysicalKey::Code(KeyCode::ArrowUp) => {
                 self.forward = state;
-                true
             }
             PhysicalKey::Code(KeyCode::KeyA) | PhysicalKey::Code(KeyCode::ArrowLeft) => {
                 self.left = state;
-                true
             }
             PhysicalKey::Code(KeyCode::KeyS) | PhysicalKey::Code(KeyCode::ArrowDown) => {
                 self.backward = state;
-                true
             }
             PhysicalKey::Code(KeyCode::KeyD) | PhysicalKey::Code(KeyCode::ArrowRight) => {
                 self.right = state;
-                true
             }
-            _ => false,
+            _ => {}
         }
     }
+    pub fn process_mouse(&mut self, delta_x: f64, delta_y: f64) {
+        let yaw = delta_x as f32 / 20.;
+        let pitch = delta_y as f32 / 20.;
+        self.rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0);
+    }
 
-    pub fn update_camera(&self, camera: &mut Camera) {
+    pub fn update_camera(&mut self, camera: &mut Camera) {
         if self.forward {
             camera.eye += camera.facing * self.speed;
         }
@@ -102,5 +104,8 @@ impl CameraLookingAt {
         if self.right {
             camera.eye += camera.facing.cross(camera.up) * self.speed;
         }
+        camera.facing = self.rotation.mul_vec3(camera.facing);
+        camera.up = self.rotation.mul_vec3(camera.up);
+        self.rotation = glam::Quat::IDENTITY;
     }
 }
