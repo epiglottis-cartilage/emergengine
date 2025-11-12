@@ -1,10 +1,11 @@
 mod camera;
 mod error;
+mod instance;
 mod texture;
 mod vertex;
 pub use error::{ErrorLogger, Result};
 use parking_lot::Mutex;
-use std::{sync::Arc, time};
+use std::{f32::consts, sync::Arc, time};
 pub use vertex::Vertex;
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
@@ -15,11 +16,13 @@ use winit::{
     window::{Window, WindowId},
 };
 
+use crate::instance::{Instance, InstanceRaw};
+
 pub struct App {
     window: Arc<Window>,
     context: RenderContext,
     frame_interval: time::Duration,
-    camra_controller: camera::CameraController,
+    camera_controller: camera::CameraLookingAt,
 }
 struct RenderContext {
     device: wgpu::Device,
@@ -33,13 +36,15 @@ struct RenderContext {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     render_pipeline: wgpu::RenderPipeline,
+    instances: Vec<Instance>,
+    instance_buffer: wgpu::Buffer,
     size: winit::dpi::PhysicalSize<u32>,
     size_changed: bool,
 }
 impl RenderContext {
     pub async fn new(window: &Arc<Window>) -> Result<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
+            backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone()).log()?;
@@ -143,7 +148,7 @@ impl RenderContext {
             // +z 朝向屏幕外
             eye: (0.0, 1.0, 2.0).into(),
             // 摄像机看向原点
-            target: (0.0, 0.0, 0.0).into(),
+            facing: (0.0, 0.0, -1.0).into(),
             // 定义哪个方向朝上
             up: glam::Vec3::Y,
             aspect: config.width as f32 / config.height as f32,
@@ -181,6 +186,37 @@ impl RenderContext {
             label: Some("camera_bind_group"),
         });
 
+        let instances = (0..10)
+            .flat_map(|z| {
+                (0..10).map(move |x| {
+                    let position = glam::Vec3 {
+                        x: x as f32,
+                        y: 0.0,
+                        z: z as f32,
+                    };
+
+                    let rotation = if position.length().abs() <= f32::EPSILON {
+                        // 这一行特殊确保在坐标 (0, 0, 0) 处的对象不会被缩放到 0
+                        // 因为错误的四元数会影响到缩放
+                        glam::Quat::from_axis_angle(glam::Vec3::Z, 0.0)
+                    } else {
+                        glam::Quat::from_axis_angle(position.normalize(), consts::FRAC_PI_4)
+                    };
+
+                    Instance { position, rotation }
+                })
+            })
+            .collect::<Vec<_>>();
+        let instance_data = instances
+            .iter()
+            .map(Into::into)
+            .collect::<Vec<instance::InstanceRaw>>();
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -194,7 +230,7 @@ impl RenderContext {
                 module: &shader,
                 compilation_options: Default::default(),
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
+                buffers: &[Vertex::desc(), InstanceRaw::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -235,6 +271,8 @@ impl RenderContext {
             config,
             vertex_buffer,
             index_buffer,
+            instances,
+            instance_buffer,
             camera,
             camera_buffer,
             camera_bind_group,
@@ -301,8 +339,9 @@ impl RenderContext {
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..vertex::INDICES.len() as _, 0, 0..1);
+            render_pass.draw_indexed(0..10, 0, 0..self.instances.len() as _);
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -310,7 +349,7 @@ impl RenderContext {
 
         Ok(())
     }
-    fn update_camera(&mut self) {
+    fn update_camera_buffer(&mut self) {
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -330,7 +369,7 @@ impl App {
             context: RenderContext::new(&window).await?,
             window,
             frame_interval: time::Duration::from_millis(16),
-            camra_controller: camera::CameraController::new(0.4),
+            camera_controller: camera::CameraLookingAt::new(0.2),
         })
     }
 }
@@ -387,12 +426,12 @@ impl ApplicationHandler for AppHandler {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                app.camra_controller.process_events(&event);
+                app.camera_controller.process_keyevents(&event);
             }
             WindowEvent::RedrawRequested => {
                 app.window.pre_present_notify();
-                app.camra_controller.update_camera(&mut app.context.camera);
-                app.context.update_camera();
+                app.camera_controller.update_camera(&mut app.context.camera);
+                app.context.update_camera_buffer();
                 match app.context.render() {
                     Ok(_) => {}
                     // 当展示平面的上下文丢失，就需重新配置
