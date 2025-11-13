@@ -1,17 +1,21 @@
+#![feature(const_trait_impl)]
+#![feature(iterator_try_collect)]
+#![feature(unsafe_cell_access)]
 mod camera;
 mod error;
 mod instance;
+mod model;
+use model::DrawModel;
 mod texture;
-mod vertex;
 pub use error::{ErrorLogger, Result};
+pub use model::*;
 use parking_lot::Mutex;
 use std::{f32::consts, sync::Arc, time};
-pub use vertex::Vertex;
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalPosition, PhysicalPosition},
+    dpi::LogicalPosition,
     event::WindowEvent,
     event_loop::ActiveEventLoop,
     window::{Window, WindowId},
@@ -30,8 +34,7 @@ struct RenderContext {
     surface: wgpu::Surface<'static>,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    model: Model,
     diffuse_bind_group: wgpu::BindGroup,
     depth_texture: texture::Texture,
     camera: camera::Camera,
@@ -46,7 +49,7 @@ struct RenderContext {
 impl RenderContext {
     pub async fn new(window: &Arc<Window>) -> Result<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::GL,
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         let surface = instance.create_surface(window.clone()).log()?;
@@ -117,17 +120,16 @@ impl RenderContext {
                 label: Some("texture_bind_group_layout"),
             });
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(vertex::VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(vertex::INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let model = model::Model::load(
+            "/home/epiglottis/Code/cartilage-engine/resource/models/1.glb",
+            &device,
+            &queue,
+        )
+        .log()?
+        .pop()
+        .unwrap();
+        println!("{:#?}", model);
 
         let diffuse = texture::Texture::default(&device, &queue);
         let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -192,9 +194,9 @@ impl RenderContext {
             .flat_map(|z| {
                 (0..10).map(move |x| {
                     let position = glam::Vec3 {
-                        x: x as f32,
+                        x: 4. * x as f32,
                         y: 0.0,
-                        z: z as f32,
+                        z: 4. * z as f32,
                     };
 
                     let rotation = if position.length().abs() <= f32::EPSILON {
@@ -235,7 +237,7 @@ impl RenderContext {
                 module: &shader,
                 compilation_options: Default::default(),
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                buffers: &[ModelVertex::DESC, InstanceRaw::DESC],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -280,8 +282,7 @@ impl RenderContext {
             device,
             queue,
             config,
-            vertex_buffer,
-            index_buffer,
+            model,
             instances,
             instance_buffer,
             depth_texture,
@@ -306,6 +307,8 @@ impl RenderContext {
             self.config.width = self.size.width;
             self.config.height = self.size.height;
             self.surface.configure(&self.device, &self.config);
+            self.depth_texture =
+                texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
             self.size_changed = false;
         }
     }
@@ -336,9 +339,9 @@ impl RenderContext {
                     depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.6,
-                            g: 0.2,
-                            b: 0.3,
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
                             a: 0.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -358,10 +361,11 @@ impl RenderContext {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..10, 0, 0..self.instances.len() as _);
+            render_pass.draw_mesh(
+                &self.model.nodes[0].mesh.as_ref().unwrap().primitives[0],
+                0..self.instances.len() as _,
+            );
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -449,12 +453,12 @@ impl ApplicationHandler for AppHandler {
             }
             WindowEvent::Resized(physical_size) => {
                 if physical_size.width == 0 || physical_size.height == 0 {
-                    // 处理最小化窗口的事件
                     log::info!("Window minimized!");
                 } else {
                     log::info!("Window resized: {:?}", physical_size);
-
                     app.context.set_window_resized(physical_size);
+                    app.context.camera.aspect =
+                        physical_size.width as f32 / physical_size.height as f32;
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {

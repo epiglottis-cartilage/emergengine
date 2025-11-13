@@ -80,8 +80,9 @@ impl CameraLookingAt {
         }
     }
     pub fn process_mouse(&mut self, delta_x: f64, delta_y: f64) {
-        let yaw = delta_x as f32 / 20.;
-        let pitch = delta_y as f32 / 20.;
+        let yaw = delta_x as f32 / 100.;
+        let pitch = -delta_y as f32 / 100.;
+        eprintln!("{} {}", yaw, pitch);
         self.rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0);
     }
 
@@ -104,8 +105,10 @@ impl CameraLookingAt {
         if self.right {
             camera.eye += camera.facing.cross(camera.up) * self.speed;
         }
+
         camera.facing = self.rotation.mul_vec3(camera.facing);
         camera.up = self.rotation.mul_vec3(camera.up);
+        println!("{:?} {:?}", camera.facing, camera.up);
         self.rotation = glam::Quat::IDENTITY;
     }
 }
