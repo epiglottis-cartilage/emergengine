@@ -1,5 +1,4 @@
 use cartilage_engine::*;
-use glam::{Vec3, vec3};
 use winit::event_loop::EventLoop;
 
 fn main() -> Result<()> {

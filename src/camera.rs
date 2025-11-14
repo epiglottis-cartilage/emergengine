@@ -1,5 +1,4 @@
 use winit::{
-    dpi::PhysicalPosition,
     event::{ElementState, KeyEvent},
     keyboard::{KeyCode, PhysicalKey},
 };
@@ -16,13 +15,9 @@ pub struct Camera {
 
 impl Camera {
     pub fn build_view_projection_matrix(&self) -> glam::Mat4 {
-        // 1.s
         let view = glam::Mat4::look_to_rh(self.eye, self.facing, self.up);
-        // 2.
         let proj =
             glam::Mat4::perspective_rh(self.fovy.to_radians(), self.aspect, self.znear, self.zfar);
-
-        // 3.
         return proj * view;
     }
 }
@@ -36,7 +31,8 @@ pub struct CameraLookingAt {
     pub backward: bool,
     pub left: bool,
     pub right: bool,
-    pub rotation: glam::Quat,
+    pub yaw: f32,
+    pub pitch: f32,
 }
 
 impl CameraLookingAt {
@@ -49,7 +45,8 @@ impl CameraLookingAt {
             backward: false,
             left: false,
             right: false,
-            rotation: glam::Quat::IDENTITY,
+            yaw: 0.0,
+            pitch: 0.0,
         }
     }
 
@@ -80,10 +77,8 @@ impl CameraLookingAt {
         }
     }
     pub fn process_mouse(&mut self, delta_x: f64, delta_y: f64) {
-        let yaw = delta_x as f32 / 100.;
-        let pitch = -delta_y as f32 / 100.;
-        eprintln!("{} {}", yaw, pitch);
-        self.rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0);
+        self.yaw += delta_x as f32 / 100.;
+        self.pitch -= delta_y as f32 / 100.;
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera) {
@@ -106,9 +101,17 @@ impl CameraLookingAt {
             camera.eye += camera.facing.cross(camera.up) * self.speed;
         }
 
-        camera.facing = self.rotation.mul_vec3(camera.facing);
-        camera.up = self.rotation.mul_vec3(camera.up);
-        println!("{:?} {:?}", camera.facing, camera.up);
-        self.rotation = glam::Quat::IDENTITY;
+        let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, self.yaw, self.pitch, 0.0);
+        let new_up = rotation.mul_vec3(camera.up);
+        if new_up.y > 0.0 {
+            camera.facing = rotation.mul_vec3(camera.facing);
+            camera.up = new_up;
+        } else {
+            let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, self.yaw, 0.0, 0.0);
+            camera.facing = rotation.mul_vec3(camera.facing);
+            camera.up = rotation.mul_vec3(camera.up);
+        }
+        self.yaw = 0.0;
+        self.pitch = 0.0;
     }
 }

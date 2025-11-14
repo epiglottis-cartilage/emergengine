@@ -1,10 +1,12 @@
 use glam::{Mat4, Quat, Vec3};
+use wgpu::util::DeviceExt;
+#[derive(Debug, Clone, Copy)]
 pub struct Instance {
     pub position: Vec3,
     pub rotation: Quat,
 }
-impl Into<InstanceRaw> for &Instance {
-    fn into(self) -> InstanceRaw {
+impl Instance {
+    pub fn build(&self) -> InstanceRaw {
         InstanceRaw(
             (Mat4::from_rotation_translation(self.rotation, self.position)).to_cols_array_2d(),
         )
@@ -14,7 +16,7 @@ impl Into<InstanceRaw> for &Instance {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceRaw([[f32; 4]; 4]);
 
-impl InstanceRaw {
+impl Instance {
     pub const DESC: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: size_of::<InstanceRaw>() as _,
         // We need to switch from using a step mode of Vertex to Instance
@@ -48,4 +50,29 @@ impl InstanceRaw {
             },
         ],
     };
+}
+
+pub struct LoadedInstance {
+    pub instances: Vec<Instance>,
+    pub buffer: wgpu::Buffer,
+}
+impl LoadedInstance {
+    pub fn new(device: &wgpu::Device, instances: Vec<Instance>) -> Self {
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(
+                instances
+                    .iter()
+                    .map(Instance::build)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            ),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        Self {
+            instances,
+            buffer: instance_buffer,
+        }
+    }
 }

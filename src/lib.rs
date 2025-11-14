@@ -1,16 +1,18 @@
 #![feature(const_trait_impl)]
 #![feature(iterator_try_collect)]
 #![feature(unsafe_cell_access)]
+#![feature(lazy_type_alias)]
+// #![allow(dead_code)]
 mod camera;
 mod error;
 mod instance;
-mod model;
-use model::DrawModel;
+pub mod model;
 mod texture;
 pub use error::{ErrorLogger, Result};
+use glam::{Quat, Vec3};
 pub use model::*;
 use parking_lot::Mutex;
-use std::{f32::consts, sync::Arc, time};
+use std::{sync::Arc, time};
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
 use winit::{
@@ -21,11 +23,12 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::instance::{Instance, InstanceRaw};
+use crate::instance::{Instance, LoadedInstance};
 
 pub struct App {
     window: Arc<Window>,
     context: RenderContext,
+    models: Vec<(Model, LoadedInstance)>,
     frame_interval: time::Duration,
     camera_controller: camera::CameraLookingAt,
 }
@@ -34,15 +37,12 @@ struct RenderContext {
     surface: wgpu::Surface<'static>,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    model: Model,
-    diffuse_bind_group: wgpu::BindGroup,
-    depth_texture: texture::Texture,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    depth_texture: texture::ZbufferTexture,
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     render_pipeline: wgpu::RenderPipeline,
-    instances: Vec<Instance>,
-    instance_buffer: wgpu::Buffer,
     size: winit::dpi::PhysicalSize<u32>,
     size_changed: bool,
 }
@@ -119,33 +119,8 @@ impl RenderContext {
                 ],
                 label: Some("texture_bind_group_layout"),
             });
+
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
-
-        let model = model::Model::load(
-            "/home/epiglottis/Code/cartilage-engine/resource/models/1.glb",
-            &device,
-            &queue,
-        )
-        .log()?
-        .pop()
-        .unwrap();
-        println!("{:#?}", model);
-
-        let diffuse = texture::Texture::default(&device, &queue);
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
 
         let camera = camera::Camera {
             // 将摄像机向上移动 1 个单位，向后移动 2 个单位
@@ -190,39 +165,8 @@ impl RenderContext {
             label: Some("camera_bind_group"),
         });
 
-        let instances = (0..10)
-            .flat_map(|z| {
-                (0..10).map(move |x| {
-                    let position = glam::Vec3 {
-                        x: 4. * x as f32,
-                        y: 0.0,
-                        z: 4. * z as f32,
-                    };
-
-                    let rotation = if position.length().abs() <= f32::EPSILON {
-                        // 这一行特殊确保在坐标 (0, 0, 0) 处的对象不会被缩放到 0
-                        // 因为错误的四元数会影响到缩放
-                        glam::Quat::from_axis_angle(glam::Vec3::Z, 0.0)
-                    } else {
-                        glam::Quat::from_axis_angle(position.normalize(), consts::FRAC_PI_4)
-                    };
-
-                    Instance { position, rotation }
-                })
-            })
-            .collect::<Vec<_>>();
-        let instance_data = instances
-            .iter()
-            .map(Into::into)
-            .collect::<Vec<instance::InstanceRaw>>();
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
         let depth_texture =
-            texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+            texture::ZbufferTexture::create_depth_texture(&device, &config, "depth_texture");
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -237,7 +181,7 @@ impl RenderContext {
                 module: &shader,
                 compilation_options: Default::default(),
                 entry_point: Some("vs_main"),
-                buffers: &[ModelVertex::DESC, InstanceRaw::DESC],
+                buffers: &[ModelVertex::DESC, Instance::DESC],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -262,7 +206,7 @@ impl RenderContext {
                 conservative: false,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: texture::Texture::DEPTH_FORMAT,
+                format: texture::ZbufferTexture::DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
@@ -282,14 +226,11 @@ impl RenderContext {
             device,
             queue,
             config,
-            model,
-            instances,
-            instance_buffer,
+            texture_bind_group_layout,
             depth_texture,
             camera,
             camera_buffer,
             camera_bind_group,
-            diffuse_bind_group,
             render_pipeline,
             size,
             size_changed: false,
@@ -307,13 +248,33 @@ impl RenderContext {
             self.config.width = self.size.width;
             self.config.height = self.size.height;
             self.surface.configure(&self.device, &self.config);
-            self.depth_texture =
-                texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            self.depth_texture = texture::ZbufferTexture::create_depth_texture(
+                &self.device,
+                &self.config,
+                "depth_texture",
+            );
             self.size_changed = false;
         }
     }
+    pub fn load_model<P>(&mut self, path: P) -> Result<Vec<Model>>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        model::Model::load(
+            path,
+            &self.device,
+            &self.queue,
+            &self.texture_bind_group_layout,
+        )
+    }
+    pub fn create_instance(&self, instances: Vec<Instance>) -> LoadedInstance {
+        LoadedInstance::new(&self.device, instances)
+    }
 
-    fn render(&mut self) -> Result<()> {
+    fn render<'a, I>(&mut self, models: I) -> Result<()>
+    where
+        I: Iterator<Item = &'a (Model, LoadedInstance)>,
+    {
         if self.size.width == 0 || self.size.height == 0 {
             return Ok(());
         }
@@ -357,15 +318,12 @@ impl RenderContext {
                 }),
                 ..Default::default()
             });
-
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.draw_mesh(
-                &self.model.nodes[0].mesh.as_ref().unwrap().primitives[0],
-                0..self.instances.len() as _,
-            );
+            for (model, instance) in models {
+                render_pass.set_vertex_buffer(1, instance.buffer.slice(..));
+                render_pass.draw_model(model, 0..instance.instances.len() as _);
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -391,10 +349,26 @@ impl App {
     async fn new(window: Arc<Window>) -> Result<Self> {
         Ok(Self {
             context: RenderContext::new(&window).await?,
+            models: Vec::new(),
             window,
             frame_interval: time::Duration::from_millis(16),
             camera_controller: camera::CameraLookingAt::new(0.2),
         })
+    }
+    pub fn load_model<P>(&mut self, path: P) -> Result<()>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let models = self.context.load_model(path)?;
+        let instance = Instance {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        };
+        self.models = models
+            .into_iter()
+            .map(|m| (m, self.context.create_instance(vec![instance])))
+            .collect();
+        Ok(())
     }
 }
 #[derive(Default)]
@@ -415,15 +389,14 @@ impl ApplicationHandler for AppHandler {
                     .with_transparent(true);
 
                 let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-                let wgpu_app = pollster::block_on(App::new(window)).unwrap();
+                let mut wgpu_app = pollster::block_on(App::new(window)).unwrap();
+                wgpu_app.load_model("./resource/models/mi35.glb").unwrap();
                 app.replace(wgpu_app);
             }
         }
     }
 
-    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        // 暂停事件
-    }
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {}
 
     fn window_event(
         &mut self,
@@ -435,7 +408,6 @@ impl ApplicationHandler for AppHandler {
         let mut app = self.app.lock();
         let app = app.as_mut().unwrap();
 
-        // 窗口事件
         match event {
             WindowEvent::CursorMoved { position, .. } => match self.cursor_position {
                 Some(ref mut p) => {
@@ -468,7 +440,7 @@ impl ApplicationHandler for AppHandler {
                 app.window.pre_present_notify();
                 app.camera_controller.update_camera(&mut app.context.camera);
                 app.context.update_camera_buffer();
-                match app.context.render() {
+                match app.context.render(app.models.iter().filter(|_| true)) {
                     Ok(_) => {}
                     // 当展示平面的上下文丢失，就需重新配置
                     // Err(wgpu::SurfaceError::Lost) => eprintln!("Surface is lost"),
