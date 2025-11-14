@@ -45,6 +45,8 @@ struct RenderContext {
     render_pipeline: wgpu::RenderPipeline,
     size: winit::dpi::PhysicalSize<u32>,
     size_changed: bool,
+    default_texture: Arc<Texture>,
+    default_material: Arc<Material>,
 }
 impl RenderContext {
     pub async fn new(window: &Arc<Window>) -> Result<Self> {
@@ -197,7 +199,7 @@ impl RenderContext {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
+                cull_mode: Some(wgpu::Face::Back),
                 // 将此设置为 Fill 以外的任何值都要需要开启 Feature::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // 需要开启 Features::DEPTH_CLIP_CONTROL
@@ -221,6 +223,13 @@ impl RenderContext {
             cache: None,
         });
 
+        let default_texture = Arc::new(Texture::new_default(
+            &device,
+            &queue,
+            &texture_bind_group_layout,
+        ));
+        let default_material = Arc::new(Material::new_default(default_texture.clone()));
+
         Ok(Self {
             surface,
             device,
@@ -234,6 +243,8 @@ impl RenderContext {
             render_pipeline,
             size,
             size_changed: false,
+            default_texture,
+            default_material,
         })
     }
     fn set_window_resized(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -265,6 +276,8 @@ impl RenderContext {
             &self.device,
             &self.queue,
             &self.texture_bind_group_layout,
+            self.default_texture.clone(),
+            self.default_material.clone(),
         )
     }
     pub fn create_instance(&self, instances: Vec<Instance>) -> LoadedInstance {
@@ -390,7 +403,7 @@ impl ApplicationHandler for AppHandler {
 
                 let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
                 let mut wgpu_app = pollster::block_on(App::new(window)).unwrap();
-                wgpu_app.load_model("./resource/models/mi35.glb").unwrap();
+                wgpu_app.load_model("./resource/models/2.glb").unwrap();
                 app.replace(wgpu_app);
             }
         }

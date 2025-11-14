@@ -21,6 +21,7 @@ impl Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("name", &self.name)
+            .field("mash", &self.mesh)
             .field("children", &self.children)
             .finish()
     }
@@ -34,37 +35,118 @@ impl Debug for Mesh {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Mesf")
             .field("name", &self.name)
-            .field("primitives", &self.primitives.len())
+            .field("primitives", &self.primitives)
             .finish()
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Material {
+    pub name: Option<String>,
     pub base_color_texture: Option<Arc<Texture>>,
     pub base_color_factor: [f32; 4],
 }
-const DEFAULT_MATERIAL: std::cell::LazyCell<Arc<Material>> = std::cell::LazyCell::new(|| {
-    Arc::new(Material {
-        base_color_texture: None,
-        base_color_factor: [1.0, 1.0, 1.0, 1.0],
-    })
-});
-#[derive(Clone, Debug)]
+impl Debug for Material {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Material")
+            .field("name", &self.name)
+            .field("base", &self.base_color_texture)
+            .finish()
+    }
+}
+impl Material {
+    pub fn new_default(texture: Arc<Texture>) -> Self {
+        Self {
+            name: Some(String::from("default")),
+            base_color_texture: Some(texture),
+            base_color_factor: [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
+#[derive(Clone)]
 pub struct Primitive {
     vertex_buf: wgpu::Buffer,
     index_buf: Option<(wgpu::Buffer, u32)>,
     topo: wgpu::PrimitiveTopology,
     pub material: Arc<Material>,
 }
-#[derive(Clone, Debug)]
+impl Debug for Primitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Primitive")
+            .field("material", &self.material)
+            .finish()
+    }
+}
+#[derive(Clone)]
 pub struct Texture {
-    pub image: Arc<Image>,
+    pub name: Option<String>,
+    image: Arc<Image>,
     view: wgpu::TextureView,
     sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
 }
+impl Debug for Texture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Texture").field("name", &self.name).finish()
+    }
+}
+impl Texture {
+    pub fn new_default(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Self {
+        let label = "default".to_string();
+        const SZIE: u32 = 5;
+        let mut rgba = image::ImageBuffer::new(SZIE, SZIE);
+        rgba.pixels_mut().enumerate().for_each(|(i, pixel)| {
+            *pixel = image::Rgba(if i & 1 == 0 {
+                [0u8, 0, 0, 255]
+            } else {
+                [137, 100, 204, 255]
+            });
+        });
+        let image = Image::from_image(
+            device,
+            queue,
+            &image::DynamicImage::from(rgba),
+            Some(&label),
+        );
+        let view = image
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::MirrorRepeat,
+            address_mode_v: wgpu::AddressMode::MirrorRepeat,
+            address_mode_w: wgpu::AddressMode::MirrorRepeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: Some("diffuse_bind_group"),
+        });
+        Self {
+            name: Some("default".into()),
+            image: Arc::new(image),
+            view,
+            sampler,
+            bind_group,
+        }
+    }
+}
 
-#[derive(Debug)]
 pub struct Image {
     texture: wgpu::Texture,
 }
@@ -81,15 +163,15 @@ impl Image {
     pub fn from_image(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        img: &image::DynamicImage,
+        image: &image::DynamicImage,
         label: Option<&str>,
     ) -> Self {
         let mut binding = None;
-        let rgba = img.as_rgba8().unwrap_or_else(|| {
-            binding = Some(img.to_rgba8());
+        let rgba = image.as_rgba8().unwrap_or_else(|| {
+            binding = Some(image.to_rgba8());
             binding.as_ref().unwrap()
         });
-        let dimensions = img.dimensions();
+        let dimensions = image.dimensions();
 
         let size = wgpu::Extent3d {
             width: dimensions.0,
@@ -131,13 +213,25 @@ impl Model {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         texture_layout: &wgpu::BindGroupLayout,
+        default_texture: Arc<Texture>,
+        default_material: Arc<Material>,
     ) -> Result<Vec<Self>>
     where
         P: AsRef<Path>,
     {
         log::info!("Loading model: {}", path.as_ref().display());
         let (document, buffers, images) = gltf::import(path).log()?;
-        ModelLoader::new(device, queue, document, buffers, images, texture_layout).load()
+        ModelLoader::new(
+            device,
+            queue,
+            document,
+            buffers,
+            images,
+            texture_layout,
+            default_texture,
+            default_material,
+        )
+        .load()
     }
 }
 
@@ -154,6 +248,8 @@ struct ModelLoader<'a> {
     images: UnsafeCell<HashMap<usize, Arc<Image>>>,
     // layouts
     texture_layout: &'a wgpu::BindGroupLayout,
+    // default
+    default_texture: Arc<Texture>,
 }
 impl<'a> ModelLoader<'a> {
     fn new(
@@ -163,9 +259,11 @@ impl<'a> ModelLoader<'a> {
         buffers: Vec<gltf::buffer::Data>,
         images: Vec<gltf::image::Data>,
         texture_layout: &'a wgpu::BindGroupLayout,
+        default_texture: Arc<Texture>,
+        default_material: Arc<Material>,
     ) -> Self {
         let mut materials = HashMap::with_capacity(document.materials().len());
-        materials.insert(None, DEFAULT_MATERIAL.clone());
+        materials.insert(None, default_material);
         Self {
             primitives: UnsafeCell::new(HashMap::with_capacity(buffers.len())),
             materials: UnsafeCell::new(materials),
@@ -177,12 +275,13 @@ impl<'a> ModelLoader<'a> {
             data_buf: buffers,
             image_buf: images,
             texture_layout,
+            default_texture,
         }
     }
     fn load(self) -> Result<Vec<Model>> {
         self.document
             .scenes()
-            .map(|s| self.load_scene(s))
+            .map(|s| dbg!(self.load_scene(s)))
             .try_collect()
             .log()
     }
@@ -215,7 +314,11 @@ impl<'a> ModelLoader<'a> {
         })
     }
     fn load_mesh(&self, mesh: gltf::Mesh, transform_acc: Mat4) -> Result<Mesh> {
-        log::debug!("Loading mesh {:?}", mesh.name());
+        log::debug!(
+            "Loading mesh {:?} with {} primitives",
+            mesh.name(),
+            mesh.primitives().len()
+        );
         let mesh = Mesh {
             name: mesh.name().unwrap_or_default().to_string(),
             primitives: mesh
@@ -246,7 +349,8 @@ impl<'a> ModelLoader<'a> {
                 let uv: Box<dyn ExactSizeIterator<Item = _>> = reader
                     .read_tex_coords(0)
                     .map(|x| Box::new(x.into_f32()) as _)
-                    .unwrap_or(Box::new(repeat_n([0f32, 0.], n)));
+                    .unwrap();
+                // .unwrap_or(Box::new(repeat_n([0f32, 0.], n)));
 
                 let vertex_buf =
                     self.device
@@ -254,12 +358,12 @@ impl<'a> ModelLoader<'a> {
                             label: Some("Vertex Buffer"),
                             contents: bytemuck::cast_slice(
                                 positons
-                                    .zip(normals)
                                     .zip(uv)
-                                    .map(|((position, normal), uv)| ModelVertex {
+                                    .zip(normals)
+                                    .map(|((position, uv), normal)| ModelVertex {
                                         position,
-                                        normal,
                                         uv,
+                                        normal,
                                     })
                                     .collect::<Vec<_>>()
                                     .as_slice(),
@@ -287,7 +391,7 @@ impl<'a> ModelLoader<'a> {
                 use gltf::mesh::Mode;
                 let topo = match primitive.mode() {
                     Mode::Triangles => wgpu::PrimitiveTopology::TriangleList,
-                    Mode::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
+                    // Mode::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
                     _ => unimplemented!(),
                 };
                 let vertex = Arc::new(Primitive {
@@ -310,10 +414,11 @@ impl<'a> ModelLoader<'a> {
                 let pbr = material.pbr_metallic_roughness();
                 let base_color_factor = pbr.base_color_factor();
                 let base_color_texture = match pbr.base_color_texture() {
-                    None => None,
+                    None => Some(self.default_texture.clone()),
                     Some(t) => Some(self.load_texture(t.texture())?),
                 };
                 let material = Arc::new(Material {
+                    name: material.name().map(Into::into),
                     base_color_factor,
                     base_color_texture,
                 });
@@ -348,6 +453,7 @@ impl<'a> ModelLoader<'a> {
                     label: Some("diffuse_bind_group"),
                 });
                 let texture = Arc::new(Texture {
+                    name: texture.name().map(Into::into),
                     image,
                     sampler,
                     view,
