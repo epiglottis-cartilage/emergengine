@@ -9,7 +9,7 @@ mod instance;
 pub mod model;
 mod texture;
 pub use error::{ErrorLogger, Result};
-use glam::{Quat, Vec3};
+use glam::{vec3, Quat, Vec3};
 pub use model::*;
 use parking_lot::Mutex;
 use std::{sync::Arc, time};
@@ -377,10 +377,9 @@ impl App {
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
         };
-        self.models = models
+        self.models.extend(models
             .into_iter()
-            .map(|m| (m, self.context.create_instance(vec![instance])))
-            .collect();
+            .map(|m| (m, self.context.create_instance(vec![instance]))));
         Ok(())
     }
 }
@@ -404,6 +403,16 @@ impl ApplicationHandler for AppHandler {
                 let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
                 let mut wgpu_app = pollster::block_on(App::new(window)).unwrap();
                 wgpu_app.load_model("./resource/models/2.glb").unwrap();
+                wgpu_app
+                    .load_model("./resource/models/damagedhelmet.glb")
+                    .unwrap();
+                wgpu_app.models.iter_mut().enumerate().for_each(|(i, m)| {
+                    let instace = Instance {
+                        position: vec3((i*3)as f32,0.,0.),
+                        rotation: Quat::IDENTITY,
+                    };
+                    m.1 = wgpu_app.context.create_instance(vec![instace]);
+                });
                 app.replace(wgpu_app);
             }
         }

@@ -281,7 +281,7 @@ impl<'a> ModelLoader<'a> {
     fn load(self) -> Result<Vec<Model>> {
         self.document
             .scenes()
-            .map(|s| dbg!(self.load_scene(s)))
+            .map(|s| self.load_scene(s))
             .try_collect()
             .log()
     }
