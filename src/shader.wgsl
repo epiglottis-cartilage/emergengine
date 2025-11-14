@@ -14,6 +14,7 @@ struct InstanceInput {
 struct VertexInput {
     @location(0) position: vec3f,
     @location(1) uv: vec2f,
+    @location(2) normal: vec3f,
 };
 
 struct VertexOutput {
@@ -50,6 +51,6 @@ struct FragmentOutput {
 
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0)  vec4f {
-    let uv = vec2f(in.uv.x, 1.0 - in.uv.y);
+    let uv = vec2f(in.uv.x, in.uv.y);
     return textureSample(t_diffuse, s_diffuse, uv);
 }
