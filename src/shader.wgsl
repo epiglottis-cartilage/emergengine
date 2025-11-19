@@ -20,6 +20,7 @@ struct VertexInput {
 struct VertexOutput {
     @builtin(position) clip_position: vec4f,
     @location(1) uv: vec2f,
+    @location(2) normal: vec3f,
 };
 alias FragmentInput = VertexOutput;
 
@@ -34,8 +35,11 @@ fn vs_main(
         instance.model_matrix_2,
         instance.model_matrix_3,
     );
+
     var out: VertexOutput;
     out.uv = model.uv;
+    let model_rotation = mat3x3f(model_matrix[0].xyz, model_matrix[1].xyz, model_matrix[2].xyz);
+    out.normal = model_rotation*model.normal;
     out.clip_position = camera.view_proj * model_matrix * vec4f(model.position, 1.0);
     return out;
 }
@@ -52,5 +56,8 @@ struct FragmentOutput {
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0)  vec4f {
     let uv = vec2f(in.uv.x, in.uv.y);
-    return textureSample(t_diffuse, s_diffuse, uv);
+    let base_color=  textureSample(t_diffuse, s_diffuse, uv);
+    let brightness = max(dot(in.normal, vec3f(0.0, 1.0, 0.0)),0.1);
+    let color = vec4f(base_color.rgb * brightness, base_color.a);
+    return color;
 }
