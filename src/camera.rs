@@ -102,15 +102,18 @@ impl CameraLookingAt {
         }
 
         let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, self.yaw, self.pitch, 0.0);
-        let new_up = rotation.mul_vec3(camera.up);
-        if new_up.y > 0.0 {
-            camera.facing = rotation.mul_vec3(camera.facing);
-            camera.up = new_up;
-        } else {
-            let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, self.yaw, 0.0, 0.0);
-            camera.facing = rotation.mul_vec3(camera.facing);
-            camera.up = rotation.mul_vec3(camera.up);
-        }
+        // let new_up = rotation.mul_vec3(camera.up);
+        // if new_up.y > 0.0 {
+        //     camera.facing = rotation.mul_vec3(camera.facing);
+        //     camera.up = new_up;
+        // } else {
+        //     let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, self.yaw, 0.0, 0.0);
+        //     camera.facing = rotation.mul_vec3(camera.facing);
+        //     camera.up = rotation.mul_vec3(camera.up);
+        // }
+        
+        camera.facing = rotation.mul_vec3(camera.facing);
+        camera.up = rotation.mul_vec3(camera.up);
         self.yaw = 0.0;
         self.pitch = 0.0;
     }

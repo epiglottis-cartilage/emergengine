@@ -100,7 +100,7 @@ impl Texture {
         let mut rgba = image::ImageBuffer::new(SZIE, SZIE);
         rgba.pixels_mut().enumerate().for_each(|(i, pixel)| {
             *pixel = image::Rgba(if i & 1 == 0 {
-                [0u8, 0, 0, 255]
+                [45u8, 45, 45, 255]
             } else {
                 [137, 100, 204, 255]
             });

@@ -67,12 +67,26 @@ impl LoadedInstance {
                     .collect::<Vec<_>>()
                     .as_slice(),
             ),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
         });
-
         Self {
             instances,
             buffer: instance_buffer,
         }
+    }
+    pub fn update_buffer(&mut self, queue: &mut wgpu::Queue) {
+        queue.write_buffer(
+            &self.buffer,
+            0,
+            bytemuck::cast_slice(
+                self.instances
+                    .iter()
+                    .map(Instance::build)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            ),
+        );
     }
 }

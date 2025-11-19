@@ -9,7 +9,7 @@ mod instance;
 pub mod model;
 mod texture;
 pub use error::{ErrorLogger, Result};
-use glam::{vec3, Quat, Vec3};
+use glam::{Quat, Vec3, vec3};
 pub use model::*;
 use parking_lot::Mutex;
 use std::{sync::Arc, time};
@@ -135,7 +135,7 @@ impl RenderContext {
             aspect: config.width as f32 / config.height as f32,
             fovy: 45.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 1500.0,
         };
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -377,9 +377,11 @@ impl App {
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
         };
-        self.models.extend(models
-            .into_iter()
-            .map(|m| (m, self.context.create_instance(vec![instance]))));
+        self.models.extend(
+            models
+                .into_iter()
+                .map(|m| (m, self.context.create_instance(vec![instance]))),
+        );
         Ok(())
     }
 }
@@ -406,12 +408,14 @@ impl ApplicationHandler for AppHandler {
                 wgpu_app
                     .load_model("./resource/models/damagedhelmet.glb")
                     .unwrap();
+                wgpu_app
+                    .load_model("./resource/models/terraintest.glb")
+                    .unwrap();
                 wgpu_app.models.iter_mut().enumerate().for_each(|(i, m)| {
-                    let instace = Instance {
-                        position: vec3((i*3)as f32,0.,0.),
-                        rotation: Quat::IDENTITY,
-                    };
-                    m.1 = wgpu_app.context.create_instance(vec![instace]);
+                    m.1.instances.iter_mut().for_each(|instace| {
+                        instace.position = vec3((i * 3) as f32, 0., 0.);
+                    });
+                    m.1.update_buffer(&mut wgpu_app.context.queue);
                 });
                 app.replace(wgpu_app);
             }
