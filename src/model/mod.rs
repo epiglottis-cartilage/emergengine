@@ -120,7 +120,7 @@ impl Texture {
             address_mode_w: wgpu::AddressMode::MirrorRepeat,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -560,7 +560,7 @@ impl<'a> ModelLoader<'a> {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter,
             min_filter,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         sampler

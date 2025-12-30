@@ -11,15 +11,31 @@ impl<T, E: core::fmt::Display> ErrorLogger for core::result::Result<T, E> {
     type Output = T;
     type Error = E;
     fn log(self) -> Self {
+        let location = std::panic::Location::caller();
         match &self {
             Ok(_) => {
-                #[cfg(debug_assertions)]
-                log::trace!("succ: {}", std::any::type_name::<T>());
+                if cfg!(debug_assertions) {
+                    let msg = format!("succ: {}", std::any::type_name::<T>());
+                    let record = log::Record::builder()
+                        .level(log::Level::Trace)
+                        .file(Some(location.file()))
+                        .line(Some(location.line()))
+                        .target(&msg)
+                        .build();
+                    log::logger().log(&record);
+                }
             }
             Err(e) => {
-                log::error!("fail {} because: {}", std::any::type_name::<T>(), e);
+                let msg = format!("{} due to: {}", std::any::type_name::<T>(), e);
+                let record = log::Record::builder()
+                    .level(log::Level::Trace)
+                    .file(Some(location.file()))
+                    .line(Some(location.line()))
+                    .target(&msg)
+                    .build();
+                log::logger().log(&record);
                 #[cfg(debug_assertions)]
-                panic!()
+                panic!();
             }
         }
         self

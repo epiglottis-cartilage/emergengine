@@ -174,7 +174,7 @@ impl RenderContext {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
-                push_constant_ranges: &[],
+                immediate_size: 0,
             });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -219,7 +219,7 @@ impl RenderContext {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None, // 5.
+            multiview_mask: None,
             cache: None,
         });
 
